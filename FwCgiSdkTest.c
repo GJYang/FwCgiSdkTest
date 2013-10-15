@@ -1,9 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <malloc.h>
-// tweaked by SungboKang
+// tweaked by SungboKang //////////
+#include <pthread.h>
 #include <unistd.h>
 #define LENGTH_FFMPEG_COMMAND 60
+#define MAX_QUEUE_N 256
+///////////////////////////////////
 
 #ifdef linux
 #include <sys/types.h>
@@ -88,6 +91,17 @@ static int Decoding(Cffm4l* ffm4l, pjpeg_usr_t pImgBuff, char *filename);
 
 static int SavePacket(char *pImgBuff, char *filename, int ImageSize);
 
+// tweaked by SungboKang /////////
+void* Control_thread_function(void *);
+void* Ffmpeg_thread_function(void *);
+
+typedef struct {
+	int head;
+	int tail;
+	int queue[MAX_QUEUE_N];
+} CircularQueue;
+//////////////////////////////////
+
 SytJesVideoCodecTypeEnum setuped_codec;
 static	char	wp_domain[] ="";
 static	short	wp_port=0;
@@ -95,14 +109,12 @@ static	short	wp_port=0;
 const int MAX_FRAME_SIZE = (500*1024);
 const int MAX_RGB_SIZE = (3*2048*1536);
 
-
 int main(int argc, char *argv[])
 {
 	// tweaked by SungboKang //
 	int frameCnt = 0;
-	int tempSeperateH264FileNumber = 0;
-	int pid;
-	char commandFFmpeg[LENGTH_FFMPEG_COMMAND];
+	int tempSeparateH264FileNumber = 0;
+	// pthread_t controlThread;
 	///////////////////////////
 
 	char *			pImgBuff;
@@ -191,6 +203,10 @@ int main(int argc, char *argv[])
 	//=============================================================================
 
 	//=============================================================================
+	
+	// tweaked by SungboKang ////
+
+	/////////////////////////////
 	
 	// Get Cgi Stream
 	//for(idx=0 ; idx < RECV_IMAGE_CNT ; idx++)
@@ -283,8 +299,10 @@ int main(int argc, char *argv[])
 					
 					// sprintf(tmp_img_file, "img%d_3_%02d.264",__LINE__, idx);	// original function call. saves one frame into one file
 					// sprintf(tmp_img_file, "VIDEO.h264"); // new function call. saves many frames into one file	
-					sprintf(tmp_img_file, "VIDEO%d.h264", tempSeperateH264FileNumber); // newer function call. saves many frames into numbered files	
-
+					
+					// tweaked by SungboKang //
+					sprintf(tmp_img_file, "VIDEO%d.h264", tempSeparateH264FileNumber); // newer function call. saves many frames into numbered files	
+					///////////////////////////
 				}
 				// SavePacket(pImgBuff, tmp_img_file, ImageSize); // original function call. saves one frame into one file WITH HEADER DATA
 				SavePacket(pH264Image, tmp_img_file, H264FrameSize); // new function call. saves a frame without the JES headers
@@ -294,29 +312,36 @@ int main(int argc, char *argv[])
 	
 		// tweaked by SungboKang ////////////////////////////////////////////////////////////////
 		// assume that a IP Camera sends 30 frames at any circumstances.
-		// In here, it runs every 5 seconds(150 frames) to make a separate H264 file
-		if((++frameCnt) == 150)
+		// In here, it runs every 5 seconds(160 frames) to make a separate H264 file
+		if((++frameCnt) == 160)
 		{
-			pid = fork();
-			if(pid == 0) // a child process runs here
-			{
-				sprintf(commandFFmpeg, "ffmpeg -r 30 -i VIDEO%d.h264 -vcodec copy VIDEO%d.mp4 &", tempSeperateH264FileNumber, tempSeperateH264FileNumber);
-				system(commandFFmpeg); // execute ffmpeg command
+			pthread_t threadFFmpeg; // declare thread object
+			int thread_id;
+			int thread_arg = tempSeparateH264FileNumber;
 
-				exit(0); // child is dead after a video has made
-			}
-			else if(pid < 0) // when fork() doesnt work properly
+			// create and run a new thread
+			thread_id = pthread_create(&threadFFmpeg, NULL, Ffmpeg_thread_function, (void *)&thread_arg);
+			if(thread_id < 0) // when thread doesnt work properly
 			{
-				printf("Fork error\n");
+				perror("thread create error\n");
 				exit(-1);
 			}
 
-			tempSeperateH264FileNumber++;
+			tempSeparateH264FileNumber++;
 			frameCnt = 0;
+			First_IFrame_Flag = 0;
+
+			if(tempSeparateH264FileNumber == 3) // makes 3 h264 files then quit looping
+			{
+				pthread_join(&threadFFmpeg, NULL);
+				break;			
+			}
+			else
+			{
+				pthread_detach(threadFFmpeg); // detach a thread from the main thread in order to run and finish separately	
+			}
 		}
 	
-	if(tempSeperateH264FileNumber == 10) // makes 10 h264 files then quit looping
-		break;
 	//////////////////////////////////////////////////////////////////////////////////////////////
 #endif
 	}
@@ -503,3 +528,14 @@ static int SavePacket(char* pImgBuff, char *filename, int ImageSize)
 
 	return 0;
 }
+
+// tweaked by SungboKang /////////
+void* Ffmpeg_thread_function(void* arg)
+{
+	int tempSeparateH264FileNumber = *((int *)arg);
+	char commandFFmpeg[LENGTH_FFMPEG_COMMAND];
+	
+	sprintf(commandFFmpeg, "ffmpeg -r 30 -i VIDEO%d.h264 -vcodec copy VIDEO%d.mp4 &", tempSeparateH264FileNumber, tempSeparateH264FileNumber);
+	system(commandFFmpeg); // execute ffmpeg command
+}
+//////////////////////////////////
