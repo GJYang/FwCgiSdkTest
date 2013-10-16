@@ -91,16 +91,33 @@ static int Decoding(Cffm4l* ffm4l, pjpeg_usr_t pImgBuff, char *filename);
 
 static int SavePacket(char *pImgBuff, char *filename, int ImageSize);
 
-// tweaked by SungboKang /////////
-void* Control_thread_function(void *);
-void* Ffmpeg_thread_function(void *);
-
+// tweaked by SungboKang //////////////////////////////////////////////////////////
 typedef struct {
 	int head;
 	int tail;
 	int queue[MAX_QUEUE_N];
 } CircularQueue;
-//////////////////////////////////
+
+typedef short Boolean;
+#define FALSE 0
+#define TRUE 1
+
+void* Control_thread_function();
+void* Ffmpeg_thread_function(void*);
+void Enqueue(int);
+int Dequeue();
+Boolean QueueIsEmpty();
+Boolean QueueIsFull();
+Boolean getControlThreadEndFlag();
+void setControlThreadEndFlag(Boolean arg);
+
+pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t flag_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+Boolean queueFlag = FALSE; // 'FALSE' means that there is nothing to read newly, 'FALSE' means that something is there.
+Boolean controlThreadEndFlag = FALSE; // 'FALSE' means the main thread asks for finishing the control thread
+CircularQueue queue = {0, 0, {0}};
+////////////////////////////////////////////////////////////////////////////////////
 
 SytJesVideoCodecTypeEnum setuped_codec;
 static	char	wp_domain[] ="";
@@ -111,11 +128,12 @@ const int MAX_RGB_SIZE = (3*2048*1536);
 
 int main(int argc, char *argv[])
 {
-	// tweaked by SungboKang //
+	// tweaked by SungboKang ///////////////////////////////////////////////////
 	int frameCnt = 0;
 	int tempSeparateH264FileNumber = 0;
-	// pthread_t controlThread;
-	///////////////////////////
+	int thread_id;
+	pthread_t controlThread;
+	////////////////////////////////////////////////////////////////////////////
 
 	char *			pImgBuff;
 	SOCKET			StreamSock;
@@ -205,7 +223,12 @@ int main(int argc, char *argv[])
 	//=============================================================================
 	
 	// tweaked by SungboKang ////
-
+	thread_id = pthread_create(&controlThread, NULL, Control_thread_function, NULL); // make the control thread
+	if(thread_id < 0) // when thread creating doesnt work properly
+	{
+		perror("thread control creation error\n");
+		exit(-1);
+	}
 	/////////////////////////////
 	
 	// Get Cgi Stream
@@ -306,40 +329,25 @@ int main(int argc, char *argv[])
 				}
 				// SavePacket(pImgBuff, tmp_img_file, ImageSize); // original function call. saves one frame into one file WITH HEADER DATA
 				SavePacket(pH264Image, tmp_img_file, H264FrameSize); // new function call. saves a frame without the JES headers
-						
+				frameCnt++;
 			}
 		}
 	
 		// tweaked by SungboKang ////////////////////////////////////////////////////////////////
 		// assume that a IP Camera sends 30 frames at any circumstances.
-		// In here, it runs every 5 seconds(160 frames) to make a separate H264 file
-		if((++frameCnt) == 160)
+		// In here, it runs every 3 seconds(96 frames) to make a separate H264 file
+		if(frameCnt == 96)
 		{
-			pthread_t threadFFmpeg; // declare thread object
-			int thread_id;
-			int thread_arg = tempSeparateH264FileNumber;
-
-			// create and run a new thread
-			thread_id = pthread_create(&threadFFmpeg, NULL, Ffmpeg_thread_function, (void *)&thread_arg);
-			if(thread_id < 0) // when thread doesnt work properly
-			{
-				perror("thread create error\n");
-				exit(-1);
-			}
-
+			while(QueueIsFull()); // waits till the queue is not full
+			Enqueue(tempSeparateH264FileNumber); // put data into the queue
+						
 			tempSeparateH264FileNumber++;
 			frameCnt = 0;
-			First_IFrame_Flag = 0;
+			
+			First_IFrame_Flag = 0; // initialize Iframe checker
 
-			if(tempSeparateH264FileNumber == 3) // makes 3 h264 files then quit looping
-			{
-				pthread_join(&threadFFmpeg, NULL);
+			if(tempSeparateH264FileNumber == 10) // makes 3 h264 files then quit looping
 				break;			
-			}
-			else
-			{
-				pthread_detach(threadFFmpeg); // detach a thread from the main thread in order to run and finish separately	
-			}
 		}
 	
 	//////////////////////////////////////////////////////////////////////////////////////////////
@@ -412,6 +420,10 @@ int main(int argc, char *argv[])
 //	if(nRead > 0)
 //		printf("FwSysGetCgiWp=[%s]\n",pImgBuff);
 
+	// tweaked by SungboKang //////////////////////////////////////////////////
+	setControlThreadEndFlag(TRUE);
+	pthread_join(controlThread, NULL); // wait for the control thread
+	///////////////////////////////////////////////////////////////////////////
 
 	SOCK_CLEANUP();
 	free(pImgBuff);
@@ -529,13 +541,126 @@ static int SavePacket(char* pImgBuff, char *filename, int ImageSize)
 	return 0;
 }
 
-// tweaked by SungboKang /////////
+// tweaked by SungboKang //////////////////////////////////////////
 void* Ffmpeg_thread_function(void* arg)
 {
-	int tempSeparateH264FileNumber = *((int *)arg);
+	int fileNumber = *((int *)arg);
 	char commandFFmpeg[LENGTH_FFMPEG_COMMAND];
 	
-	sprintf(commandFFmpeg, "ffmpeg -r 30 -i VIDEO%d.h264 -vcodec copy VIDEO%d.mp4 &", tempSeparateH264FileNumber, tempSeparateH264FileNumber);
+	sprintf(commandFFmpeg, "ffmpeg -r 30 -i VIDEO%d.h264 -vcodec copy VIDEO%d.mp4 &", fileNumber, fileNumber);
 	system(commandFFmpeg); // execute ffmpeg command
+
+	pthread_exit(0);
 }
-//////////////////////////////////
+
+void* Control_thread_function()
+{
+	pthread_t threadFFmpeg; // declare FFmpeg thread object
+	int thread_id, thread_arg;
+	
+	 // This loop ends when 'controlThreadEndFlag' is TRUE and the queue is empty as well
+	while(!(getControlThreadEndFlag() && QueueIsEmpty()))
+	{
+		if(QueueIsEmpty() == FALSE) // there is something to read in the queue
+		{
+			// create and run a new thread
+			thread_arg = Dequeue();
+			thread_id = pthread_create(&threadFFmpeg, NULL, Ffmpeg_thread_function, (void *)&thread_arg);
+			if(thread_id < 0) // when thread doesnt work properly
+			{
+				perror("FFmpeg thread create error\n");
+				exit(-1);
+			}
+
+			pthread_join(threadFFmpeg, NULL);
+		}
+		// else{continue}; // there is nothing to read in the queue
+	}
+
+	pthread_exit(0);
+}
+
+void Enqueue(int data) // put H264 VIDEO File number into the queue
+{
+	pthread_mutex_lock(&queue_mutex); // lock queue
+
+	queue.queue[(queue.tail)] = data;
+	queue.tail = ((queue.tail) + 1) % MAX_QUEUE_N;
+
+	pthread_mutex_unlock(&queue_mutex); // unlock queue
+	
+	return;
+}
+
+int Dequeue() // get the earliest H264 VIDEO File's number 
+{
+	int fileNumber;
+
+	pthread_mutex_lock(&queue_mutex); // lock queue
+
+	fileNumber = queue.queue[queue.head];
+	queue.head = ((queue.head) + 1) % MAX_QUEUE_N;
+
+	pthread_mutex_unlock(&queue_mutex); // unlock queue
+	
+	return fileNumber;
+}
+
+Boolean QueueIsEmpty()
+{
+	pthread_mutex_lock(&queue_mutex); // lock queue
+
+	if(queue.head == queue.tail)
+	{
+		pthread_mutex_unlock(&queue_mutex); // unlock queue
+		
+		return TRUE;
+	}
+		
+	pthread_mutex_unlock(&queue_mutex); // unlock queue
+	
+	return FALSE;
+}
+
+Boolean QueueIsFull()
+{
+	pthread_mutex_lock(&queue_mutex); // lock queue
+
+	if(((queue.head + 1) % MAX_QUEUE_N) == queue.tail)
+	{
+		pthread_mutex_unlock(&queue_mutex); // unlock queue
+		
+		return TRUE;
+
+	}
+		
+	pthread_mutex_unlock(&queue_mutex); // unlock queue
+		
+	return FALSE;
+}
+
+
+Boolean getControlThreadEndFlag() // getter of controlThreadEndFlag: to check whether finish the control thread
+{
+	Boolean returnValue;
+	
+	pthread_mutex_lock(&flag_mutex); // lock flag
+
+	returnValue = queueFlag;
+	
+	pthread_mutex_unlock(&flag_mutex); // unlock flag
+	
+	return returnValue;
+}
+
+void setControlThreadEndFlag(Boolean arg) // setter of controlThreadEndFlag
+{
+	pthread_mutex_lock(&flag_mutex); // lock flag
+
+	queueFlag = arg;
+	
+	pthread_mutex_unlock(&flag_mutex); // unlock flag
+	
+	return;
+}
+///////////////////////////////////////////////////////////////////
