@@ -335,8 +335,8 @@ int main(int argc, char *argv[])
 	
 		// tweaked by SungboKang ////////////////////////////////////////////////////////////////
 		// assume that a IP Camera sends 30 frames at any circumstances.
-		// In here, it runs every 3 seconds(96 frames) to make a separate H264 file
-		if(frameCnt == 96)
+		// In here, it runs every 1 second(30 frames) to make a separate H264 file
+		if(frameCnt == 30)
 		{
 			while(QueueIsFull()); // waits till the queue is not full
 			Enqueue(tempSeparateH264FileNumber); // put data into the queue
@@ -346,7 +346,7 @@ int main(int argc, char *argv[])
 			
 			First_IFrame_Flag = 0; // initialize Iframe checker
 
-			if(tempSeparateH264FileNumber == 10) // makes 3 h264 files then quit looping
+			if(tempSeparateH264FileNumber == 30) // makes 30 h264 files then quit looping
 				break;			
 		}
 	
