@@ -5,7 +5,7 @@
 #include <pthread.h>
 #include <unistd.h>
 #define LENGTH_FFMPEG_COMMAND 60
-#define MAX_QUEUE_N 256
+#define MAX_QUEUE_N 5
 ///////////////////////////////////
 
 #ifdef linux
@@ -110,6 +110,7 @@ Boolean QueueIsEmpty();
 Boolean QueueIsFull();
 Boolean getControlThreadEndFlag();
 void setControlThreadEndFlag(Boolean arg);
+Boolean FileExist(char*);
 
 pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t flag_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -302,12 +303,10 @@ int main(int argc, char *argv[])
 				}
 			}
 		}	
-
 #else
 		{				
 			if(IsJesPacketVideo((pjpeg_usr_t)pImgBuff) ) 
 			{
-		
 				if (GetVideoCodecTypeOfJesPacket((pjpeg_usr_t)pImgBuff) == JES_VIDEO_CODEC_JPEG)
 					sprintf(tmp_img_file, "img%d_3_%02d.jpg",__LINE__, idx);	
 				else if(GetVideoCodecTypeOfJesPacket((pjpeg_usr_t)pImgBuff) == JES_VIDEO_CODEC_H264) 
@@ -333,24 +332,37 @@ int main(int argc, char *argv[])
 			}
 		}
 	
-		// tweaked by SungboKang ////////////////////////////////////////////////////////////////
+		// tweaked by SungboKang ///////////////////////////////////////////////////////////////////////
 		// assume that a IP Camera sends 30 frames at any circumstances.
 		// In here, it runs every 1 second(30 frames) to make a separate H264 file
 		if(frameCnt == 30)
 		{
 			while(QueueIsFull()); // waits till the queue is not full
 			Enqueue(tempSeparateH264FileNumber); // put data into the queue
-						
-			tempSeparateH264FileNumber++;
+
+			tempSeparateH264FileNumber = (tempSeparateH264FileNumber + 1) % MAX_QUEUE_N;
+			
+			// If the next file numbered with 'tempSeparateH264FileNumber' exists, wipe it out
+			// It is probable to have a flaw related to authority.
+			// In addition, FileExist() works for files up to 2GB only
+			sprintf(tmp_img_file, "VIDEO%d.h264", tempSeparateH264FileNumber);
+			if(FileExist(tmp_img_file))
+			{
+				if(remove(tmp_img_file) < 0)
+				{
+					printf("%s file removing error\n");
+					exit(-1);
+				}
+			}
+
 			frameCnt = 0;
 			
 			First_IFrame_Flag = 0; // initialize Iframe checker
 
-			if(tempSeparateH264FileNumber == 30) // makes 30 h264 files then quit looping
+			if(tempSeparateH264FileNumber == 10) // makes 30 h264 files then quit looping
 				break;			
 		}
-	
-	//////////////////////////////////////////////////////////////////////////////////////////////
+		////////////////////////////////////////////////////////////////////////////////////////////////
 #endif
 	}
 	//=============================================================================
@@ -626,7 +638,7 @@ Boolean QueueIsFull()
 {
 	pthread_mutex_lock(&queue_mutex); // lock queue
 
-	if(((queue.head + 1) % MAX_QUEUE_N) == queue.tail)
+	if(((queue.tail + 1) % MAX_QUEUE_N) == queue.head) // the last slot should be empty to check fullness
 	{
 		pthread_mutex_unlock(&queue_mutex); // unlock queue
 		
@@ -662,5 +674,12 @@ void setControlThreadEndFlag(Boolean arg) // setter of controlThreadEndFlag
 	pthread_mutex_unlock(&flag_mutex); // unlock flag
 	
 	return;
+}
+
+Boolean FileExist(char *fileName)
+{
+	struct stat buffer;
+
+	return(stat(fileName, &buffer) == 0);
 }
 ///////////////////////////////////////////////////////////////////
