@@ -5,7 +5,8 @@
 #include <pthread.h>
 #include <unistd.h>
 #define LENGTH_FFMPEG_COMMAND 60
-#define MAX_QUEUE_N 5
+#define MAX_QUEUE_N 10
+#define FRAMECOUNT 150
 ///////////////////////////////////
 
 #ifdef linux
@@ -30,7 +31,6 @@
 	#include <io.h>
 #endif
 
-
 //=============================================================================
 #define	__HEADER_STREAM_MODE_SUPPORT
 //=============================================================================
@@ -43,7 +43,6 @@
 #ifdef DECODER_ON
 #include "ffm4l.h"
 #endif
-
 
 //=============================================================================
 //	Please set for your test environment
@@ -111,6 +110,8 @@ Boolean QueueIsFull();
 Boolean getControlThreadEndFlag();
 void setControlThreadEndFlag(Boolean arg);
 Boolean FileExist(char*);
+void WriteM3U8(char*);
+
 
 pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t flag_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -230,6 +231,22 @@ int main(int argc, char *argv[])
 		perror("thread control creation error\n");
 		exit(-1);
 	}
+
+	// if playlist file exists already, wipe it out and make a new one
+	sprintf(tmp_img_file, "playlist.m3u8");
+	if(FileExist(tmp_img_file))
+	{
+		if(remove(tmp_img_file) < 0)
+		{
+			printf("%s file removing error\n");
+			exit(-1);
+		}
+	}
+
+	WriteM3U8("#EXTM3U");
+	sprintf(tmp_img_file, "#EXT-X-TARGETDURATION:%d", FRAMECOUNT/30);
+	WriteM3U8(tmp_img_file);
+	WriteM3U8("#EXT-X-MEDIA-SEQUENCE:0");
 	/////////////////////////////
 	
 	// Get Cgi Stream
@@ -334,8 +351,8 @@ int main(int argc, char *argv[])
 	
 		// tweaked by SungboKang ///////////////////////////////////////////////////////////////////////
 		// assume that a IP Camera sends 30 frames at any circumstances.
-		// In here, it runs every 1 second(30 frames) to make a separate H264 file
-		if(frameCnt == 30)
+		// In here, it runs every 5 second(150 frames) to make a separate H264 file
+		if(frameCnt == FRAMECOUNT)
 		{
 			while(QueueIsFull()); // waits till the queue is not full
 			Enqueue(tempSeparateH264FileNumber); // put data into the queue
@@ -359,7 +376,9 @@ int main(int argc, char *argv[])
 			
 			First_IFrame_Flag = 0; // initialize Iframe checker
 
-			if(tempSeparateH264FileNumber == 10) // makes 30 h264 files then quit looping
+			// makes 30 h264 files then quit looping
+			// It should be less than MAX_QUEUE_N, otherwise working infinitely
+			if(tempSeparateH264FileNumber == (MAX_QUEUE_N-1))
 				break;			
 		}
 		////////////////////////////////////////////////////////////////////////////////////////////////
@@ -557,10 +576,14 @@ static int SavePacket(char* pImgBuff, char *filename, int ImageSize)
 void* Ffmpeg_thread_function(void* arg)
 {
 	int fileNumber = *((int *)arg);
-	char commandFFmpeg[LENGTH_FFMPEG_COMMAND];
+	char commandFFmpeg[LENGTH_FFMPEG_COMMAND], addEXTINF[LENGTH_FFMPEG_COMMAND];
 	
-	sprintf(commandFFmpeg, "ffmpeg -r 30 -i VIDEO%d.h264 -vcodec copy VIDEO%d.mp4 &", fileNumber, fileNumber);
+	// sprintf(commandFFmpeg, "ffmpeg -r 30 -i VIDEO%d.h264 -vcodec copy VIDEO%d.mp4 &", fileNumber, fileNumber);
+	sprintf(commandFFmpeg, "ffmpeg -r 30 -i VIDEO%d.h264 -f mpegts VIDEO%d.ts &", fileNumber, fileNumber);
 	system(commandFFmpeg); // execute ffmpeg command
+
+	sprintf(addEXTINF, "#EXTINF:%0.2f,\nhttp://192.168.0.21:8989/hls_test/VIDEO%d.ts", ((float)FRAMECOUNT/30.0), fileNumber);
+	WriteM3U8(addEXTINF);
 
 	pthread_exit(0);
 }
@@ -681,5 +704,14 @@ Boolean FileExist(char *fileName)
 	struct stat buffer;
 
 	return(stat(fileName, &buffer) == 0);
+}
+
+void WriteM3U8(char* printData)
+{
+	FILE *fp = fopen("playlist.m3u8", "a");
+
+	fprintf(fp, "%s\n", printData);
+	
+	fclose(fp);
 }
 ///////////////////////////////////////////////////////////////////
