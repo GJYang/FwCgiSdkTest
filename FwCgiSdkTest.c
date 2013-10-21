@@ -6,7 +6,7 @@
 #include <unistd.h>
 #define LENGTH_FFMPEG_COMMAND 60
 #define MAX_QUEUE_N 10
-#define FRAMECOUNT 150
+#define FRAMECOUNT 300
 ///////////////////////////////////
 
 #ifdef linux
@@ -234,29 +234,30 @@ int main(int argc, char *argv[])
 
 	// if playlist file exists already, wipe it out and make a new one
 	sprintf(tmp_img_file, "playlist.m3u8");
-	if(FileExist(tmp_img_file))
+	if(!FileExist(tmp_img_file))
 	{
-		if(remove(tmp_img_file) < 0)
-		{
-			printf("%s file removing error\n");
-			exit(-1);
-		}
+		WriteM3U8("#EXTM3U");
+		sprintf(tmp_img_file, "#EXT-X-TARGETDURATION:%d", FRAMECOUNT/30);
+		WriteM3U8(tmp_img_file);
+		WriteM3U8("#EXT-X-MEDIA-SEQUENCE:0");
 	}
-
-	WriteM3U8("#EXTM3U");
-	sprintf(tmp_img_file, "#EXT-X-TARGETDURATION:%d", FRAMECOUNT/30);
-	WriteM3U8(tmp_img_file);
-	WriteM3U8("#EXT-X-MEDIA-SEQUENCE:0");
 	/////////////////////////////
-	
+	// tweaked by GJ Yang
+	printf("%c[2J%c[0;0H",27,27);
+	/////////////////////////////
 	// Get Cgi Stream
 	//for(idx=0 ; idx < RECV_IMAGE_CNT ; idx++)
 	while(1)
 	{
-		// tweaked by SungboKang //////////
+		// tweaked by GJ Yang
 		// printf("Getting frame...\n");
-		printf("Getting frame...%d\n", frameCnt);
+		printf("%c[s",27);fflush(stdout); //save the cursor location
+		printf("%c[%d;%dH",27, 31, 2);fflush(stdout);
+		printf("\033[%dmGetting frame...%2d\033[0m for",42, frameCnt);
+		printf("  \033[%dmVIDEO%d.h264\033[0m\n", 41, tempSeparateH264FileNumber);
+		printf("%c[u",27);	fflush(stdout);//restore the cursor locarion
 		///////////////////////////////////
+		
 		nRetCode = FwRcvCgiStream(StreamSock, pImgBuff, MAX_PACK_SIZE, &ImageSize, &ScanMode, &DaemonId);
 		
 		/******************************** CODE ADDED BY SEYEON TECH START **********************************/
@@ -272,8 +273,10 @@ int main(int argc, char *argv[])
 
 			JesHeaderSize = (unsigned short)(ntohs(pJesHeader->usr_length) + 2) + 1; // previously 2 // added 1 // IT WORKS!!!
 
-			printf("################################ Header Size: %d\n", JesHeaderSize);
-
+			// tweaked by GJ Yang
+			// printf("################################ Header Size: %d\n", JesHeaderSize);
+			////////////////////////////////////
+			
 			// modify here remove the first 0x00 always
 			// look at research log, june 20, 2012
 			H264FrameSize = ImageSize - JesHeaderSize;
@@ -283,7 +286,10 @@ int main(int argc, char *argv[])
 
 		if( nRetCode < 0 )
 		{
-			printf("GetCgiStream Error=%d\n", nRetCode);
+			// tweaked by GJ Yang ///////////////////
+			printf("%c[%d;%dH",27, 32, 2);fflush(stdout);
+			printf("\033[%dmGetCgiStream Error=%d\033[0m\n", 41, nRetCode);
+			////////////////////////////////////////
 		}
 		else
 #ifdef DECODER_ON
@@ -357,8 +363,9 @@ int main(int argc, char *argv[])
 			while(QueueIsFull()); // waits till the queue is not full
 			Enqueue(tempSeparateH264FileNumber); // put data into the queue
 
-			tempSeparateH264FileNumber = (tempSeparateH264FileNumber + 1) % MAX_QUEUE_N;
-			
+			// tempSeparateH264FileNumber = (tempSeparateH264FileNumber + 1) % MAX_QUEUE_N;
+			tempSeparateH264FileNumber = tempSeparateH264FileNumber + 1;
+
 			// If the next file numbered with 'tempSeparateH264FileNumber' exists, wipe it out
 			// It is probable to have a flaw related to authority.
 			// In addition, FileExist() works for files up to 2GB only
@@ -378,8 +385,8 @@ int main(int argc, char *argv[])
 
 			// makes 30 h264 files then quit looping
 			// It should be less than MAX_QUEUE_N, otherwise working infinitely
-			if(tempSeparateH264FileNumber == (MAX_QUEUE_N-1))
-				break;			
+			// if(tempSeparateH264FileNumber == (MAX_QUEUE_N-1))
+			// 	break;			
 		}
 		////////////////////////////////////////////////////////////////////////////////////////////////
 #endif
@@ -455,7 +462,7 @@ int main(int argc, char *argv[])
 	setControlThreadEndFlag(TRUE);
 	pthread_join(controlThread, NULL); // wait for the control thread
 
-	WriteM3U8("#EXT-X-ENDLIST");
+	// WriteM3U8("#EXT-X-ENDLIST");
 	///////////////////////////////////////////////////////////////////////////
 
 	SOCK_CLEANUP();
@@ -580,11 +587,16 @@ void* Ffmpeg_thread_function(void* arg)
 	int fileNumber = *((int *)arg);
 	char commandFFmpeg[LENGTH_FFMPEG_COMMAND], addEXTINF[LENGTH_FFMPEG_COMMAND];
 	
+	// tweaked by GJ Yang /////
+	printf("%c[2J%c[0;0H",27,27);fflush(stdout);
+	printf("%c[%d;%dH",27, 1, 1);fflush(stdout);
+	///////////////////////////
+
 	// sprintf(commandFFmpeg, "ffmpeg -r 30 -i VIDEO%d.h264 -vcodec copy VIDEO%d.mp4 &", fileNumber, fileNumber);
-	sprintf(commandFFmpeg, "ffmpeg -r 30 -i VIDEO%d.h264 -f mpegts VIDEO%d.ts &", fileNumber, fileNumber);
+	sprintf(commandFFmpeg, "ffmpeg -r 30 -i VIDEO%d.h264 -vcodec copy -f mpegts VIDEO%d.ts &", fileNumber, fileNumber);
 	system(commandFFmpeg); // execute ffmpeg command
 
-	sprintf(addEXTINF, "#EXTINF:%0.2f,\nhttp://192.168.0.21:8989/hls_test/VIDEO%d.ts", ((float)FRAMECOUNT/30.0), fileNumber);
+	sprintf(addEXTINF, "#EXTINF:%0.2f,\nhttp://embedded.snut.ac.kr:8989/hls_test/VIDEO%d.ts", ((float)FRAMECOUNT/30.0), fileNumber);
 	WriteM3U8(addEXTINF);
 
 	pthread_exit(0);
