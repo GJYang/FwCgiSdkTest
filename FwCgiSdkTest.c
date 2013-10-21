@@ -454,6 +454,8 @@ int main(int argc, char *argv[])
 	// tweaked by SungboKang //////////////////////////////////////////////////
 	setControlThreadEndFlag(TRUE);
 	pthread_join(controlThread, NULL); // wait for the control thread
+
+	WriteM3U8("#EXT-X-ENDLIST");
 	///////////////////////////////////////////////////////////////////////////
 
 	SOCK_CLEANUP();
