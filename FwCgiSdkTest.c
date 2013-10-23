@@ -7,6 +7,7 @@
 #define LENGTH_FFMPEG_COMMAND 60
 #define MAX_QUEUE_N 10
 #define FRAMECOUNT 300
+#define PLAYLIST_FILENAME "playlist.m3u8"
 ///////////////////////////////////
 ///////////////////////////////////
 #ifdef linux
@@ -111,7 +112,7 @@ Boolean getControlThreadEndFlag();
 void setControlThreadEndFlag(Boolean arg);
 Boolean FileExist(char*);
 void WriteM3U8(char*);
-
+void RemoveForemostMedia(int);
 
 pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t flag_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -233,7 +234,7 @@ int main(int argc, char *argv[])
 	}
 
 	// if playlist file exists already, wipe it out and make a new one
-	sprintf(tmp_img_file, "playlist.m3u8");
+	sprintf(tmp_img_file, PLAYLIST_FILENAME);
 	if(!FileExist(tmp_img_file))
 	{
 		WriteM3U8("#EXTM3U");
@@ -242,6 +243,7 @@ int main(int argc, char *argv[])
 		WriteM3U8("#EXT-X-MEDIA-SEQUENCE:0");
 	}
 	/////////////////////////////
+	
 	// tweaked by GJ Yang
 	printf("%c[2J%c[0;0H",27,27);
 	/////////////////////////////
@@ -357,14 +359,14 @@ int main(int argc, char *argv[])
 	
 		// tweaked by SungboKang ///////////////////////////////////////////////////////////////////////
 		// assume that a IP Camera sends 30 frames at any circumstances.
-		// In here, it runs every 5 second(150 frames) to make a separate H264 file
+		// In here, it runs every 10 second(300 frames) to make a separate H264 file
 		if(frameCnt == FRAMECOUNT)
 		{
 			while(QueueIsFull()); // waits till the queue is not full
 			Enqueue(tempSeparateH264FileNumber); // put data into the queue
 
-			// tempSeparateH264FileNumber = (tempSeparateH264FileNumber + 1) % MAX_QUEUE_N;
-			tempSeparateH264FileNumber = tempSeparateH264FileNumber + 1;
+			tempSeparateH264FileNumber = (tempSeparateH264FileNumber + 1) % MAX_QUEUE_N;
+			// tempSeparateH264FileNumber = tempSeparateH264FileNumber + 1;
 
 			// If the next file numbered with 'tempSeparateH264FileNumber' exists, wipe it out
 			// It is probable to have a flaw related to authority.
@@ -593,12 +595,12 @@ void* Ffmpeg_thread_function(void* arg)
 	///////////////////////////
 
 	// sprintf(commandFFmpeg, "ffmpeg -r 30 -i VIDEO%d.h264 -vcodec copy VIDEO%d.mp4 &", fileNumber, fileNumber);
-	sprintf(commandFFmpeg, "ffmpeg -r 30 -i VIDEO%d.h264 -vcodec copy -f mpegts VIDEO%d.ts &", fileNumber, fileNumber);
+	sprintf(commandFFmpeg, "ffmpeg -r 30 -i VIDEO%d.h264 -vcodec copy -f mpegts -y VIDEO%d.ts &", fileNumber, fileNumber);
 	system(commandFFmpeg); // execute ffmpeg command
 
 	sprintf(addEXTINF, "#EXTINF:%0.2f,\nhttp://embedded.snut.ac.kr:8989/hls_test/VIDEO%d.ts", ((float)FRAMECOUNT/30.0), fileNumber);
 	WriteM3U8(addEXTINF);
-
+	
 	pthread_exit(0);
 }
 
@@ -606,7 +608,8 @@ void* Control_thread_function()
 {
 	pthread_t threadFFmpeg; // declare FFmpeg thread object
 	int thread_id, thread_arg;
-	
+	unsigned int sequenceCnt = 0, sequenceFlag = 0;
+
 	 // This loop ends when 'controlThreadEndFlag' is TRUE and the queue is empty as well
 	while(!(getControlThreadEndFlag() && QueueIsEmpty()))
 	{
@@ -622,6 +625,12 @@ void* Control_thread_function()
 			}
 
 			pthread_join(threadFFmpeg, NULL);
+
+			// remove the foremost media segment in playlist.m3u8
+			if(sequenceFlag < MAX_QUEUE_N)
+				sequenceFlag++;
+			else
+				RemoveForemostMedia(sequenceCnt++);
 		}
 		// else{continue}; // there is nothing to read in the queue
 	}
@@ -713,18 +722,68 @@ void setControlThreadEndFlag(Boolean arg) // setter of controlThreadEndFlag
 	return;
 }
 
+// FileExist() works for files up to 2GB only
 Boolean FileExist(char *fileName)
 {
 	struct stat buffer;
 
+	// get file's status and return it
 	return(stat(fileName, &buffer) == 0);
 }
 
 void WriteM3U8(char* printData)
 {
-	FILE *fp = fopen("playlist.m3u8", "a");
+	FILE *fp = fopen(PLAYLIST_FILENAME, "a");
 
 	fprintf(fp, "%s\n", printData);
+	
+	fclose(fp);
+}
+
+void RemoveForemostMedia(int sequenceCnt)
+{
+	int fileSize;
+	int cnt = 0;
+	int retCnt = 0;
+	char* fileString;
+	char printData[30];
+	FILE *fp;
+	
+	fp = fopen(PLAYLIST_FILENAME, "r");
+
+	// calculate the size of playlist.m3u8
+	fseek(fp, 0, SEEK_END);
+	fileSize = ftell(fp);
+	fseek(fp, 0, SEEK_SET);
+	
+	// copy the file content to fileString
+	// + 2 is for a case of raising TARGETSEQUENCE digit
+	fileString = (char*)malloc(sizeof(char) * (fileSize + 1));
+ 	fread(fileString, sizeof(char), fileSize, fp);
+	fileString[fileSize + 1] = '\0';
+
+	fclose(fp);
+
+	// truncate file to zero length("w" argument) and reopen
+	fp = fopen(PLAYLIST_FILENAME, "w");
+	
+	while(cnt < fileSize)
+	{
+		if(retCnt < 2 || retCnt > 4)
+			fputc(fileString[cnt], fp);
+		else if(retCnt == 2)
+		{
+			sprintf(printData, "#EXT-X-MEDIA-SEQUENCE:%d\n", sequenceCnt);
+			fputs(printData, fp);
+			while(fileString[cnt] != '\n')
+				cnt++;
+		}
+		
+		if(fileString[cnt] == '\n')
+			retCnt++;
+
+		cnt++;
+	}
 	
 	fclose(fp);
 }
