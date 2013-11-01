@@ -8,6 +8,11 @@
 #define MAX_QUEUE_N 10
 #define FRAMECOUNT 300
 #define PLAYLIST_FILENAME "playlist.m3u8"
+#define USE_FFMPEG_LIBRARY
+#ifdef USE_FFMPEG_LIBRARY
+	#include "libavcodec/avcodec.h"
+	#include "libavformat/avformat.h"
+#endif
 ///////////////////////////////////
 ///////////////////////////////////
 #ifdef linux
@@ -242,6 +247,12 @@ int main(int argc, char *argv[])
 		WriteM3U8(tmp_img_file);
 		WriteM3U8("#EXT-X-MEDIA-SEQUENCE:0");
 	}
+
+	#ifdef USE_FFMPEG_LIBRARY
+	// Initialize ffmpeg library
+	av_register_all();
+
+	#endif
 	/////////////////////////////
 	
 	// tweaked by GJ Yang
@@ -588,18 +599,217 @@ void* Ffmpeg_thread_function(void* arg)
 {
 	int fileNumber = *((int *)arg);
 	char commandFFmpeg[LENGTH_FFMPEG_COMMAND], addEXTINF[LENGTH_FFMPEG_COMMAND];
-	
+	#ifdef USE_FFMPEG_LIBRARY
+		unsigned int i;
+		unsigned int m_in_vid_strm_idx;
+
+		char inputFile[LENGTH_FFMPEG_COMMAND], outputFile[LENGTH_FFMPEG_COMMAND];
+	#endif
 	// tweaked by GJ Yang /////
 	printf("%c[2J%c[0;0H",27,27);fflush(stdout);
 	printf("%c[%d;%dH",27, 1, 1);fflush(stdout);
 	///////////////////////////
 
 	// sprintf(commandFFmpeg, "ffmpeg -r 30 -i VIDEO%d.h264 -vcodec copy VIDEO%d.mp4 &", fileNumber, fileNumber);
-	sprintf(commandFFmpeg, "ffmpeg -r 30 -i VIDEO%d.h264 -vcodec copy -f mpegts -y VIDEO%d.ts &", fileNumber, fileNumber);
-	system(commandFFmpeg); // execute ffmpeg command
+	
+	#ifdef USE_FFMPEG_LIBRARY // use FFmpeg Library
+		AVFormatContext* m_informat = NULL;
+		AVFormatContext* m_outformat = NULL;
+		AVStream* m_in_vid_strm = NULL;
+		
+		// Open input file
+		sprintf(inputFile, "VIDEO%d.h264", fileNumber);
+		if(avformat_open_input(&m_informat, inputFile, 0, 0) != 0)
+		{
+			printf("\nopen %s file error!!!!!!!\n", inputFile);
+			exit(-1);
+		}
 
-	sprintf(addEXTINF, "#EXTINF:%0.2f,\nhttp://embedded.snut.ac.kr:8989/hls_test/VIDEO%d.ts", ((float)FRAMECOUNT/30.0), fileNumber);
-	WriteM3U8(addEXTINF);
+		// Find input file's stream info
+		if((avformat_find_stream_info(m_informat, 0)) < 0)
+		{
+			printf("\nfind stream info error!!!!!!!\n");
+			exit(-1);
+		}
+
+		for(i = 0; i < m_informat->nb_streams; i++)
+		{
+			if(m_informat->streams[i]->codec->codectype == AVMEDIA_TYPE_VIDEO)
+			{
+				m_in_vid_strm_idx = i;
+	            m_in_vid_strm = m_informat->streams[i];
+			}
+
+			// Create outputFile and allocate output format
+			AVOutputFormat* outfmt = NULL;
+			sprintf(outputFile, "VIDEO%d.ts", fileNumber);
+			outfmt = av_guess_format(NULL, outputFile, NULL);
+			if(outfmt == NULL) // ts format doesnt exist
+			{
+				printf("output file format doesnt exist");
+				exit(-1);
+			}
+			else // ts format exists
+			{
+				m_outformat = avformat_alloc_context();
+				if(m_outformat != NULL)
+				{
+					m_outformat->oformat = outfmt;
+					snprintf(m_outformat->filename, sizeof(m_outformat->filename), "%s", outputFile); // ?????
+				}
+				else
+				{
+					printf("m_outformat error");
+					exit(-1);
+				}
+			}
+
+			// Add video stream to output format
+			AVCodec* out_vid_codec = NULL;
+			if((outfmt->video_codec != AV_CODEC_ID_NONE) && (m_in_vid_strm != NULL))
+			{
+				out_vid_codec = avcodec_find_encoder(outfmt->video_codec);
+				if(out_vid_codec == NULL)
+				{
+					printf("could not find vid encoder");
+					exit(-1);
+				}
+				else
+				{
+					printf("found out vid encoder");
+					m_out_vid_strm = avformat_new_stream(m_outformat, out_vid_codec);
+	                if(NULL == m_out_vid_strm)
+	                {
+	                     PRINT_MSG("Failed to Allocate Output Vid Strm ")
+	                     ret = -1;
+	                     return ret;
+	                }
+	                else
+	                {
+						if(avcodec_copy_context(m_out_vid_strm->codec, m_informat->streams[m_in_vid_strm_idx]->codec) != 0)
+						{
+							printf("Failed to copy context");
+							exit(-1);
+						}
+						else
+						{
+							m_out_vid_strm->sample_aspect_ratio.den = 
+		                    m_out_vid_strm->codec->sample_aspect_ratio.den;
+
+		                    m_out_vid_strm->sample_aspect_ratio.num = 
+		                    m_in_vid_strm->codec->sample_aspect_ratio.num;
+		                    // PRINT_MSG("Copied Context ")
+		                    m_out_vid_strm->codec->codec_id = m_in_vid_strm->codec->codec_id;
+		                    m_out_vid_strm->codec->time_base.num = 1;
+		                    m_out_vid_strm->codec->time_base.den = 
+		                    m_fps*(m_in_vid_strm->codec->ticks_per_frame);         
+		                    m_out_vid_strm->time_base.num = 1;
+		                    m_out_vid_strm->time_base.den = 1000;
+		                    m_out_vid_strm->r_frame_rate.num = m_fps;
+		                    m_out_vid_strm->r_frame_rate.den = 1;
+		                    m_out_vid_strm->avg_frame_rate.den = 1;
+		                    m_out_vid_strm->avg_frame_rate.num = m_fps;
+		                    m_out_vid_strm->duration = (m_out_end_time - m_out_start_time)*1000;
+						}
+					}
+				}
+			}
+
+			if(!(outfmt->flags & AVFMT_NOFILE)) 
+			{
+				if (avio_open2(&m_outformat->pb, outputFile, AVIO_FLAG_WRITE,NULL, NULL) < 0) 
+				{
+					printf("Could Not Open File ");
+					exit(-1);
+				}
+			}
+	        // Write the stream header, if any.
+			if (avformat_write_header(m_outformat, NULL) < 0) 
+			{
+				printf("Error Occurred While Writing Header ");
+				exit(-1);
+			}
+			else
+			{
+				printf("Written Output header");
+				m_init_done = true;
+			}
+
+			// Now in while loop read frame using av_read_frame and write to output format using 
+			// av_interleaved_write_frame(). You can use following loop
+			AVPacket* pkt, outpkt;
+			pkt = outpkt = NULL;
+			while(av_read_frame(m_informat, &pkt) >= 0 && (m_num_frames-- > 0))
+			{
+				if(pkt.stream_index == m_in_vid_strm_idx)
+				{
+					// PRINT_VAL("ACTUAL VID Pkt PTS ",av_rescale_q(pkt.pts,m_in_vid_strm->time_base, m_in_vid_strm->codec->time_base))
+					// PRINT_VAL("ACTUAL VID Pkt DTS ", av_rescale_q(pkt.dts, m_in_vid_strm->time_base, m_in_vid_strm->codec->time_base ))
+					av_init_packet(&outpkt);
+					if(pkt.pts != AV_NOPTS_VALUE)
+					{
+						if(last_vid_pts == vid_pts)
+						{
+							vid_pts++;
+							last_vid_pts = vid_pts;
+						}
+						outpkt.pts = vid_pts;   
+						// PRINT_VAL("ReScaled VID Pts ", outpkt.pts)
+					}
+					else
+					{
+						outpkt.pts = AV_NOPTS_VALUE;
+					}
+
+					if(pkt.dts == AV_NOPTS_VALUE)
+					{
+						outpkt.dts = AV_NOPTS_VALUE;
+					}
+					else
+					{
+						outpkt.dts = vid_pts;
+						// PRINT_VAL("ReScaled VID Dts ", outpkt.dts)
+						// PRINT_MSG("=======================================")
+					}
+
+					outpkt.data = pkt.data;
+					outpkt.size = pkt.size;
+					outpkt.stream_index = pkt.stream_index;
+					outpkt.flags |= AV_PKT_FLAG_KEY;
+					last_vid_pts = vid_pts;
+					if(av_interleaved_write_frame(m_outformat, &outpkt) < 0)
+					{
+						// PRINT_MSG("Failed Video Write ")
+					}
+					else
+					{
+						m_out_vid_strm->codec->frame_number++;
+					}
+					
+					av_free_packet(&outpkt);
+					av_free_packet(&pkt);
+				}
+				// else
+				// {
+				// 	PRINT_MSG("Got Unknown Pkt ")
+			    //  num_unkwn_pkt++;
+				// }
+	            // num_total_pkt++;
+			}
+		}
+
+			// Finally write trailer and clean up everything
+			av_write_trailer(m_outformat);
+			av_free_packet(&outpkt);
+			av_free_packet(&pkt);
+
+	#else // use command line
+		sprintf(commandFFmpeg, "ffmpeg -r 30 -i VIDEO%d.h264 -vcodec copy -f mpegts -y VIDEO%d.ts &", fileNumber, fileNumber);
+		system(commandFFmpeg); // execute ffmpeg command
+
+		sprintf(addEXTINF, "#EXTINF:%0.2f,\nhttp://embedded.snut.ac.kr:8989/hls_test/VIDEO%d.ts", ((float)FRAMECOUNT/30.0), fileNumber);
+		WriteM3U8(addEXTINF);
+	#endif
 	
 	pthread_exit(0);
 }
@@ -786,5 +996,7 @@ void RemoveForemostMedia(int sequenceCnt)
 	}
 	
 	fclose(fp);
+
+	free(fileString);
 }
 ///////////////////////////////////////////////////////////////////
