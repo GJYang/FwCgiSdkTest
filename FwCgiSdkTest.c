@@ -635,10 +635,9 @@ void* Ffmpeg_thread_function(void* arg)
 	#else // use command line
 		sprintf(commandFFmpeg, "ffmpeg -r 30 -i VIDEO%d.h264 -vcodec copy -f mpegts -y VIDEO%d.ts &", fileNumber, fileNumber);
 		system(commandFFmpeg); // execute ffmpeg command
-
+	#endif
 		sprintf(addEXTINF, "#EXTINF:%0.2f,\nhttp://embedded.snut.ac.kr:8989/hls_test/VIDEO%d.ts", ((float)FRAMECOUNT/30.0), fileNumber);
 		WriteM3U8(addEXTINF);
-	#endif
 	
 	pthread_exit(0);
 }
