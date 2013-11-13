@@ -607,14 +607,14 @@ void* Ffmpeg_thread_function(void* arg)
 {
 	int fileNumber = *((int *)arg);
 	char commandFFmpeg[LENGTH_FFMPEG_COMMAND], addEXTINF[LENGTH_FFMPEG_COMMAND];
-	char fileName[LENGTH_FFMPEG_COMMAND];
+	char fileName[FILENAME_LENGTH];
 
 	// tweaked by GJ Yang /////
 	printf("%c[2J%c[0;0H",27,27);fflush(stdout);
 	printf("%c[%d;%dH",27, 1, 1);fflush(stdout);
 	///////////////////////////
 	
-	#ifndef USE_FFMPEG_LIBRARY // use FFmpeg Library
+	#ifdef USE_FFMPEG_LIBRARY // use FFmpeg Library
 		
 		sprintf(fileName, "VIDEO%d.ts", fileNumber);
 		if(FileExist(fileName))
@@ -681,7 +681,7 @@ int ConvertH264toTS(int fileNumber)
 	}
 
 	// Dump information about the input file onto strerr
-	av_dump_format(inputFormatContext, 0, inputFile, 0);
+	// av_dump_format(inputFormatContext, 0, inputFile, 0);
 
 	for(i = 0; i < inputFormatContext->nb_streams; i++)
 	{
@@ -775,10 +775,12 @@ int ConvertH264toTS(int fileNumber)
 				}
 				else
 				{
+					// time_base is used to calculate when to decode and show the frame
+					// 
 					outStream->sample_aspect_ratio.den = outStream->codec->sample_aspect_ratio.den;
                     outStream->sample_aspect_ratio.num = inStream->codec->sample_aspect_ratio.num;
                     outStream->codec->codec_id = inStream->codec->codec_id;
-                    outStream->codec->time_base.num = 1;
+                    outStream->codec->time_base.num = 2;
                     outStream->codec->time_base.den = fps * (inStream->codec->ticks_per_frame);
                     outStream->time_base.num = 1;
                     outStream->time_base.den = 1000;
