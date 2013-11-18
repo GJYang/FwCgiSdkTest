@@ -406,8 +406,8 @@ int main(int argc, char *argv[])
 
 			// makes 30 h264 files then quit looping
 			// It should be less than MAX_QUEUE_N, otherwise working infinitely
-			// if(tempSeparateH264FileNumber == (MAX_QUEUE_N-1))
-			// 	break;			
+			if(tempSeparateH264FileNumber == (MAX_QUEUE_N-1))
+				break;			
 		}
 		////////////////////////////////////////////////////////////////////////////////////////////////
 #endif

@@ -11,7 +11,7 @@
 #	export FW_SDK_ROOT_V40=~/FlexWatchV41Sdk
 #	PATH=$PATH:/opt/arm-2009q1/bin
 #-------------------------------------------------------------------------------
-FW_SDK_ROOT_V40 = /home/sung/FlexWatchV41Sdk
+FW_SDK_ROOT_V40 = /home/sungbokang/FlexWatchV41Sdk
 #-------------------------------------------------------------------------------
 
 #GFV_TMN			= FW_DM36XV2
@@ -43,7 +43,7 @@ DEFINES += -D$(GFV_PLATFORM)
 # Add Local Definitions
 # EX: DEFINES += -D__DEFINITION__=1
 #vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
-# DEFINES += -m32
+DEFINES += -m32 -g
 
 ################################################################################
 # Include & Library Directorys

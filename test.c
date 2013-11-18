@@ -76,18 +76,19 @@ int main(int argc, char* argv[])
     // calculate frame per second(fps), but following code doesnt work properly
     // because h264 file doesn't have any context information such as fps, duration and etc.
     // therefore fps is now set arbitrarily as 30 according to h264 input file.
-    // if(inStreamIndex != -1 && inputFormatContext->streams[inStreamIndex])
-    // {
-    //     if(inputFormatContext->streams[inStreamIndex]->r_frame_rate.num != AV_NOPTS_VALUE && inputFormatContext->streams[inStreamIndex]->r_frame_rate.den != 0)
-    //     {
-    //         fps =  (inputFormatContext->streams[inStreamIndex]->r_frame_rate.num)/ (inputFormatContext->streams[inStreamIndex]->r_frame_rate.den);
-    //     }
-    // }
-    // else
-    // {
-    //     fps = 30;
-    // }
+    if(inStreamIndex != -1 && inputFormatContext->streams[inStreamIndex])
+    {
+        if(inputFormatContext->streams[inStreamIndex]->r_frame_rate.num != AV_NOPTS_VALUE && inputFormatContext->streams[inStreamIndex]->r_frame_rate.den != 0)
+        {
+            fps =  (inputFormatContext->streams[inStreamIndex]->r_frame_rate.num)/ (inputFormatContext->streams[inStreamIndex]->r_frame_rate.den);
+        }
+    }
+    else
+    {
+        fps = 30;
+    }
     fps = 30;
+    printf("FPS : %d\n", fps);
 
 	// Create outputFile and allocate output format
 	sprintf(outputFile, "VIDEO.ts");
@@ -140,17 +141,19 @@ int main(int argc, char* argv[])
 				}
 				else
 				{
-					outStream->sample_aspect_ratio.den = outStream->codec->sample_aspect_ratio.den;
+					printf("TPF!!!!!!!!!!!!!!!!!!!!!!!! : %d\n", inStream->codec->ticks_per_frame);
+
+					outStream->sample_aspect_ratio.den = inStream->codec->sample_aspect_ratio.den;
                     outStream->sample_aspect_ratio.num = inStream->codec->sample_aspect_ratio.num;
                     outStream->codec->codec_id = inStream->codec->codec_id;
-                    outStream->codec->time_base.num = 1;
+                    outStream->codec->time_base.num = 2;
                     outStream->codec->time_base.den = fps * (inStream->codec->ticks_per_frame);
                     outStream->time_base.num = 1;
-                    outStream->time_base.den = 1000;
+                    outStream->time_base.den = 30;
                     outStream->r_frame_rate.num = fps;
                     outStream->r_frame_rate.den = 1;
-                    outStream->avg_frame_rate.den = 1;
                     outStream->avg_frame_rate.num = fps;
+                    outStream->avg_frame_rate.den = 1;
 				}
 			}
 		}
@@ -221,7 +224,7 @@ int main(int argc, char* argv[])
 				printf("failed video write\n");
 			else
 			{
-				printf("video write ok!!!!\n");
+				// printf("video write ok!!!!\n");
 				outStream->codec->frame_number++;
 			}
 			
