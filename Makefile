@@ -11,7 +11,7 @@
 #	export FW_SDK_ROOT_V40=~/FlexWatchV41Sdk
 #	PATH=$PATH:/opt/arm-2009q1/bin
 #-------------------------------------------------------------------------------
-FW_SDK_ROOT_V40 = /home/sungbokang/FlexWatchV41Sdk
+FW_SDK_ROOT_V40 = /home/sung/FlexWatchV41Sdk
 #-------------------------------------------------------------------------------
 
 #GFV_TMN			= FW_DM36XV2
@@ -43,7 +43,7 @@ DEFINES += -D$(GFV_PLATFORM)
 # Add Local Definitions
 # EX: DEFINES += -D__DEFINITION__=1
 #vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
-DEFINES += -m32 -g
+# DEFINES += -m32
 
 ################################################################################
 # Include & Library Directorys
@@ -131,7 +131,10 @@ LIB_DIRS += -L$(ROOT_LIB_DIR)
 #-------------------------------------------------------------------------------
 # FLAGS Definitions
 #-------------------------------------------------------------------------------
-CFLAGS = -Wall $(INC_DIRS) $(DBGFLAGS) $(DEBFLAGS) $(DEFINES)
+# CFLAGS = -Wall $(INC_DIRS) $(DBGFLAGS) $(DEBFLAGS) $(DEFINES)
+# // tweaked by Sungbo Kang /////// add -g option to eanble debugging ///
+CFLAGS = -g -Wall $(INC_DIRS) $(DBGFLAGS) $(DEBFLAGS) $(DEFINES)
+# ///////////////////////////////////////////////////////////////////////
 ARFLAGS = crv
 
 #-------------------------------------------------------------------------------
