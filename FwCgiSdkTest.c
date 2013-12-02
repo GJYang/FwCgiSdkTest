@@ -264,7 +264,7 @@ int main(int argc, char *argv[])
 	/////////////////////////////
 	
 	// tweaked by GJ Yang
-	printf("%c[2J%c[0;0H",27,27);
+	// printf("%c[2J%c[0;0H",27,27);
 	/////////////////////////////
 	// Get Cgi Stream
 	//for(idx=0 ; idx < RECV_IMAGE_CNT ; idx++)
@@ -272,11 +272,11 @@ int main(int argc, char *argv[])
 	{
 		// tweaked by GJ Yang
 		// printf("Getting frame...\n");
-		printf("%c[s",27);fflush(stdout); //save the cursor location
-		printf("%c[%d;%dH",27, 31, 2);fflush(stdout);
-		printf("\033[%dmGetting frame...%2d\033[0m for",42, frameCnt);
-		printf("  \033[%dmVIDEO%d.h264\033[0m\n", 41, tempSeparateH264FileNumber);
-		printf("%c[u",27);	fflush(stdout);//restore the cursor locarion
+		// printf("%c[s",27);fflush(stdout); //save the cursor location
+		// printf("%c[%d;%dH",27, 31, 2);fflush(stdout);
+		// printf("\033[%dmGetting frame...%2d\033[0m for",42, frameCnt);
+		// printf("  \033[%dmVIDEO%d.h264\033[0m\n", 41, tempSeparateH264FileNumber);
+		// printf("%c[u",27);	fflush(stdout);//restore the cursor locarion
 		///////////////////////////////////
 		
 		nRetCode = FwRcvCgiStream(StreamSock, pImgBuff, MAX_PACK_SIZE, &ImageSize, &ScanMode, &DaemonId);
@@ -308,8 +308,8 @@ int main(int argc, char *argv[])
 		if( nRetCode < 0 )
 		{
 			// tweaked by GJ Yang ///////////////////
-			printf("%c[%d;%dH",27, 32, 2);fflush(stdout);
-			printf("\033[%dmGetCgiStream Error=%d\033[0m\n", 41, nRetCode);
+			// printf("%c[%d;%dH",27, 32, 2);fflush(stdout);
+			// printf("\033[%dmGetCgiStream Error=%d\033[0m\n", 41, nRetCode);
 			////////////////////////////////////////
 		}
 		else
@@ -406,8 +406,8 @@ int main(int argc, char *argv[])
 
 			// makes 30 h264 files then quit looping
 			// It should be less than MAX_QUEUE_N, otherwise working infinitely
-			if(tempSeparateH264FileNumber == (MAX_QUEUE_N-1))
-				break;			
+			// if(tempSeparateH264FileNumber == (MAX_QUEUE_N-1))
+			// 	break;			
 		}
 		////////////////////////////////////////////////////////////////////////////////////////////////
 #endif
@@ -605,13 +605,15 @@ static int SavePacket(char* pImgBuff, char *filename, int ImageSize)
 // tweaked by SungboKang //////////////////////////////////////////
 void* Ffmpeg_thread_function(void* arg)
 {
+	pid_t pid;
+	int status;
 	int fileNumber = *((int *)arg);
 	char commandFFmpeg[LENGTH_FFMPEG_COMMAND], addEXTINF[LENGTH_FFMPEG_COMMAND];
 	char fileName[FILENAME_LENGTH];
 
 	// tweaked by GJ Yang /////
-	printf("%c[2J%c[0;0H",27,27);fflush(stdout);
-	printf("%c[%d;%dH",27, 1, 1);fflush(stdout);
+	// printf("%c[2J%c[0;0H",27,27);fflush(stdout);
+	// printf("%c[%d;%dH",27, 1, 1);fflush(stdout);
 	///////////////////////////
 	
 	#ifdef USE_FFMPEG_LIBRARY // use FFmpeg Library
@@ -626,19 +628,28 @@ void* Ffmpeg_thread_function(void* arg)
 			}
 		}
 		
-		if(ConvertH264toTS(fileNumber) < 0)
-		{
-			printf("converting h264 to ts error!!!!\n");
-			exit(-1);
-		}
+		pid = fork(); // use fork because of memory leak
 
+		if(pid == 0) // child process
+		{
+			if(ConvertH264toTS(fileNumber) < 0)
+				printf("converting h264 to ts error!!!! it has been skipped\n");
+			exit(0);
+		}
 	#else // use command line
 		sprintf(commandFFmpeg, "ffmpeg -r 30 -i VIDEO%d.h264 -vcodec copy -f mpegts -y VIDEO%d.ts &", fileNumber, fileNumber);
 		system(commandFFmpeg); // execute ffmpeg command
 	#endif
 		sprintf(addEXTINF, "#EXTINF:%0.2f,\nhttp://embedded.snut.ac.kr:8989/hls_test/VIDEO%d.ts", ((float)FRAMECOUNT/30.0), fileNumber);
 		WriteM3U8(addEXTINF);
-	
+
+	#ifdef USE_FFMPEG_LIBRARY
+		if(pid != 0) // parent process
+		{
+			waitpid(pid, &status, 0);
+		}
+	#endif
+
 	pthread_exit(0);
 }
 
@@ -680,7 +691,7 @@ int ConvertH264toTS(int fileNumber)
 	}
 
 	// Dump information about the input file onto strerr
-	// av_dump_format(inputFormatContext, 0, inputFile, 0);
+	av_dump_format(inputFormatContext, 0, inputFile, 0);
 
 	for(i = 0; i < inputFormatContext->nb_streams; i++)
 	{
@@ -775,7 +786,6 @@ int ConvertH264toTS(int fileNumber)
 				else
 				{
 					// time_base is used to calculate when to decode and show the frame
-					// 
 					outStream->sample_aspect_ratio.den = outStream->codec->sample_aspect_ratio.den;
                     outStream->sample_aspect_ratio.num = inStream->codec->sample_aspect_ratio.num;
                     outStream->codec->codec_id = inStream->codec->codec_id;
@@ -785,8 +795,8 @@ int ConvertH264toTS(int fileNumber)
                     outStream->time_base.den = 1000;
                     outStream->r_frame_rate.num = fps;
                     outStream->r_frame_rate.den = 1;
-                    outStream->avg_frame_rate.den = 1;
                     outStream->avg_frame_rate.num = fps;
+                    outStream->avg_frame_rate.den = 1;
 				}
 			}
 		}
@@ -808,7 +818,7 @@ int ConvertH264toTS(int fileNumber)
 	}
 
     // Write the stream header, if any.
-	if (avformat_write_header(outputFormatContext, NULL) < 0) 
+	if (avformat_write_header(outputFormatContext, NULL) < 0)
 	{
 		printf("Error Occurred While Writing Header ");
 		return -1;
@@ -866,16 +876,38 @@ int ConvertH264toTS(int fileNumber)
 		}
 	}
 
+	// free packet
+	av_free_packet(&pkt);
+
 	// Finally write trailer and clean up everything
 	av_write_trailer(outputFormatContext);
-	
-	// Close codec
 
+	// free streams
+	// av_freep(&inStream->codec);
+	// av_freep(&inStream);
+	// av_freep(&outStream->codec);
+	// av_freep(&outStream);
+	
+	// free codec
+	// avcodec_close(outCodec);
+	
+	// free outputfile
+	// avio_close(outputFormatContext->pb);
+	
 	// free the format contexts
 	avformat_free_context(inputFormatContext);
 	avformat_free_context(outputFormatContext);
 	
-	printf("bye\n");
+	printf("done\n");
+
+	// free list
+	// AVFormatContext* inputFormatContext = NULL; // freed
+	// AVFormatContext* outputFormatContext = NULL; // freed
+	// AVStream* inStream = NULL; // freed
+	// AVStream* outStream; // freed
+	// AVOutputFormat* outFormat = NULL;
+	// AVCodec* outCodec = NULL; // freed
+	// AVPacket pkt, outpkt; // freed
 	
 	return 0;
 }
