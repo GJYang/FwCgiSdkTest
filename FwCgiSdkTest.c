@@ -395,7 +395,7 @@ int main(int argc, char *argv[])
 			{
 				if(remove(tmp_img_file) < 0)
 				{
-					printf("%s file removing error\n");
+					printf("%s file removing error\n", tmp_img_file);
 					exit(-1);
 				}
 			}
@@ -406,8 +406,12 @@ int main(int argc, char *argv[])
 
 			// makes 30 h264 files then quit looping
 			// It should be less than MAX_QUEUE_N, otherwise working infinitely
+			// if(tempSeparateH264FileNumber == 3)
 			// if(tempSeparateH264FileNumber == (MAX_QUEUE_N-1))
-			// 	break;			
+			// {
+			// 	while(!(QueueIsEmpty()));
+			// 	break;
+			// }
 		}
 		////////////////////////////////////////////////////////////////////////////////////////////////
 #endif
@@ -603,66 +607,17 @@ static int SavePacket(char* pImgBuff, char *filename, int ImageSize)
 }
 
 // tweaked by SungboKang //////////////////////////////////////////
-void* Ffmpeg_thread_function(void* arg)
-{
-	pid_t pid;
-	int status;
-	int fileNumber = *((int *)arg);
-	char commandFFmpeg[LENGTH_FFMPEG_COMMAND], addEXTINF[LENGTH_FFMPEG_COMMAND];
-	char fileName[FILENAME_LENGTH];
-
-	// tweaked by GJ Yang /////
-	// printf("%c[2J%c[0;0H",27,27);fflush(stdout);
-	// printf("%c[%d;%dH",27, 1, 1);fflush(stdout);
-	///////////////////////////
-	
-	#ifdef USE_FFMPEG_LIBRARY // use FFmpeg Library
-		
-		sprintf(fileName, "VIDEO%d.ts", fileNumber);
-		if(FileExist(fileName))
-		{
-			if(remove(fileName) < 0)
-			{
-				printf("%s file removing error\n", fileName);
-				exit(-1);
-			}
-		}
-		
-		pid = fork(); // use fork because of memory leak
-
-		if(pid == 0) // child process
-		{
-			if(ConvertH264toTS(fileNumber) < 0)
-				printf("converting h264 to ts error!!!! it has been skipped\n");
-			exit(0);
-		}
-	#else // use command line
-		sprintf(commandFFmpeg, "ffmpeg -r 30 -i VIDEO%d.h264 -vcodec copy -f mpegts -y VIDEO%d.ts &", fileNumber, fileNumber);
-		system(commandFFmpeg); // execute ffmpeg command
-	#endif
-		sprintf(addEXTINF, "#EXTINF:%0.2f,\nhttp://embedded.snut.ac.kr:8989/hls_test/VIDEO%d.ts", ((float)FRAMECOUNT/30.0), fileNumber);
-		WriteM3U8(addEXTINF);
-
-	#ifdef USE_FFMPEG_LIBRARY
-		if(pid != 0) // parent process
-		{
-			waitpid(pid, &status, 0);
-		}
-	#endif
-
-	pthread_exit(0);
-}
-
 #ifdef USE_FFMPEG_LIBRARY
 int ConvertH264toTS(int fileNumber)
 {
 	AVFormatContext* inputFormatContext = NULL;
 	AVFormatContext* outputFormatContext = NULL;
 	AVStream* inStream = NULL;
-	AVStream* outStream;
+	AVStream* outStream = NULL;
 	AVOutputFormat* outFormat = NULL;
 	AVCodec* outCodec = NULL;
-	AVPacket pkt, outpkt;
+	AVPacket pkt;
+	AVPacket outpkt;
 	char inputFile[200], outputFile[200];
 	unsigned int i, inStreamIndex = 0;
 	int fps, pts = 0, last_pts = 0;
@@ -876,57 +831,92 @@ int ConvertH264toTS(int fileNumber)
 		}
 	}
 
-	// free packet
-	av_free_packet(&pkt);
-
 	// Finally write trailer and clean up everything
 	av_write_trailer(outputFormatContext);
-
-	// free streams
-	// av_freep(&inStream->codec);
-	// av_freep(&inStream);
-	// av_freep(&outStream->codec);
-	// av_freep(&outStream);
 	
-	// free codec
-	// avcodec_close(outCodec);
-	
-	// free outputfile
-	// avio_close(outputFormatContext->pb);
-	
-	// free the format contexts
-	avformat_free_context(inputFormatContext);
-	avformat_free_context(outputFormatContext);
-	
-	printf("done\n");
-
-	// free list
-	// AVFormatContext* inputFormatContext = NULL; // freed
-	// AVFormatContext* outputFormatContext = NULL; // freed
-	// AVStream* inStream = NULL; // freed
-	// AVStream* outStream; // freed
-	// AVOutputFormat* outFormat = NULL;
-	// AVCodec* outCodec = NULL; // freed
-	// AVPacket pkt, outpkt; // freed
+	// free the memory
+	if(inStream && inStream->codec)
+		avcodec_close(inStream->codec);
+	if(inputFormatContext)
+		avformat_close_input(&inputFormatContext);
+	if(outStream && outStream->codec)
+		avcodec_close(outStream->codec);
+	if(outputFormatContext)
+	{
+		avformat_close_input(&outputFormatContext);
+		outputFormatContext = NULL;
+	}
 	
 	return 0;
 }
 #endif
 
+void* Ffmpeg_thread_function(void* arg)
+{
+	int fileNumber = *((int *)arg);
+	#ifdef USE_FFMPEG_LIBRARY
+	#else
+		char commandFFmpeg[LENGTH_FFMPEG_COMMAND];
+	#endif
+	char addEXTINF[LENGTH_FFMPEG_COMMAND];
+	char fileName[FILENAME_LENGTH];
+
+	// tweaked by GJ Yang /////
+	// printf("%c[2J%c[0;0H",27,27);fflush(stdout);
+	// printf("%c[%d;%dH",27, 1, 1);fflush(stdout);
+	///////////////////////////
+	
+	#ifdef USE_FFMPEG_LIBRARY // use FFmpeg Library
+		sprintf(fileName, "VIDEO%d.ts", fileNumber);
+		if(FileExist(fileName))
+		{
+			if(remove(fileName) < 0)
+			{
+				printf("%s file removing error\n", fileName);
+				exit(-1);
+			}
+		}
+		
+		if(ConvertH264toTS(fileNumber) < 0)
+				printf("converting h264 to ts error!!!! it has been skipped\n"); // converting failed
+		else // converting succeeded
+		{
+			sprintf(addEXTINF, "#EXTINF:%0.2f,\nhttp://embedded.snut.ac.kr:8989/hls_test/VIDEO%d.ts", ((float)FRAMECOUNT/30.0), fileNumber);
+			WriteM3U8(addEXTINF);
+		}
+	#else // use command line
+		sprintf(commandFFmpeg, "ffmpeg -r 30 -i VIDEO%d.h264 -vcodec copy -f mpegts -y VIDEO%d.ts &", fileNumber, fileNumber);
+		system(commandFFmpeg); // execute ffmpeg command
+
+		sprintf(addEXTINF, "#EXTINF:%0.2f,\nhttp://embedded.snut.ac.kr:8989/hls_test/VIDEO%d.ts", ((float)FRAMECOUNT/30.0), fileNumber);
+		WriteM3U8(addEXTINF);
+	#endif
+		
+	pthread_exit(0);
+}
+
 void* Control_thread_function()
 {
 	pthread_t threadFFmpeg; // declare FFmpeg thread object
+	// pthread_attr_t threadFFmpeg_attr;
 	int thread_id, thread_arg;
 	unsigned int sequenceCnt = 0, sequenceFlag = 0;
 
-	 // This loop ends when 'controlThreadEndFlag' is TRUE and the queue is empty as well
+	// This loop ends when 'controlThreadEndFlag' is TRUE and the queue is empty as well
+	// that is to say that it runs infinitely when controlThreadEndFlag is false or queue is not empty
 	while(!(getControlThreadEndFlag() && QueueIsEmpty()))
 	{
 		if(QueueIsEmpty() == FALSE) // there is something to read in the queue
 		{
+			// set up thread attribute(detaching)
+			// pthread_attr_init(&threadFFmpeg_attr);
+			// pthread_attr_setdetachstate(&threadFFmpeg_attr, PTHREAD_CREATE_DETACHED);
+			
 			// create and run a new thread
 			thread_arg = Dequeue();
 			thread_id = pthread_create(&threadFFmpeg, NULL, Ffmpeg_thread_function, (void *)&thread_arg);
+			
+			// thread_id = pthread_create(&threadFFmpeg, &threadFFmpeg_attr, Ffmpeg_thread_function, (void *)&thread_arg);
 			if(thread_id < 0) // when thread doesnt work properly
 			{
 				perror("FFmpeg thread create error\n");
@@ -934,7 +924,9 @@ void* Control_thread_function()
 			}
 
 			pthread_join(threadFFmpeg, NULL);
-
+			// free thread attribute
+			// pthread_attr_destroy(&threadFFmpeg_attr);
+			
 			// remove the foremost media segment in playlist.m3u8
 			if(sequenceFlag < MAX_QUEUE_N)
 				sequenceFlag++;
