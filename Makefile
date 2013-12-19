@@ -93,7 +93,7 @@ SRCS = FwCgiSdkTest.c
 #vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
 LIBS += -lpthread -lFwCgiLib -lSockUtil -lBase64 -lMd5 -lJes
 #//// tweaked by Sungbo Kang ////////////////////////////////////
-LIBS += -lavformat -lavcodec -lavutil -lavfilter -lavdevice -lm
+LIBS += -lavformat -lavcodec -lavutil -lm
 #////////////////////////////////////////////////////////////////
 
 
