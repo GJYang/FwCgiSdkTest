@@ -125,7 +125,7 @@ Boolean getControlThreadEndFlag();
 void setControlThreadEndFlag(Boolean arg);
 Boolean FileExist(char*);
 void WriteM3U8(char*);
-void RemoveForemostMedia(int);
+void RemoveForemostMedia(unsigned int);
 
 pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t flag_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -159,7 +159,7 @@ int main(int argc, char *argv[])
 	unsigned long	DaemonId = 0;
 	int				ScanMode = SCAN_RAW_MODE;
 
-	int				idx;
+	int				idx = 0;
 	long			nRead;
 	int				ImageSize;
 	int				nRetCode;
@@ -395,7 +395,7 @@ int main(int argc, char *argv[])
 			{
 				if(remove(tmp_img_file) < 0)
 				{
-					printf("%s file removing error\n");
+					printf("%s file removing error\n", tmp_img_file);
 					exit(-1);
 				}
 			}
@@ -407,7 +407,7 @@ int main(int argc, char *argv[])
 			// makes 30 h264 files then quit looping
 			// It should be less than MAX_QUEUE_N, otherwise working infinitely
 			// if(tempSeparateH264FileNumber == (MAX_QUEUE_N-1))
-			// 	break;			
+				// break;			
 		}
 		////////////////////////////////////////////////////////////////////////////////////////////////
 #endif
@@ -603,66 +603,17 @@ static int SavePacket(char* pImgBuff, char *filename, int ImageSize)
 }
 
 // tweaked by SungboKang //////////////////////////////////////////
-void* Ffmpeg_thread_function(void* arg)
-{
-	pid_t pid;
-	int status;
-	int fileNumber = *((int *)arg);
-	char commandFFmpeg[LENGTH_FFMPEG_COMMAND], addEXTINF[LENGTH_FFMPEG_COMMAND];
-	char fileName[FILENAME_LENGTH];
-
-	// tweaked by GJ Yang /////
-	// printf("%c[2J%c[0;0H",27,27);fflush(stdout);
-	// printf("%c[%d;%dH",27, 1, 1);fflush(stdout);
-	///////////////////////////
-	
-	#ifdef USE_FFMPEG_LIBRARY // use FFmpeg Library
-		
-		sprintf(fileName, "VIDEO%d.ts", fileNumber);
-		if(FileExist(fileName))
-		{
-			if(remove(fileName) < 0)
-			{
-				printf("%s file removing error\n", fileName);
-				exit(-1);
-			}
-		}
-		
-		pid = fork(); // use fork because of memory leak
-
-		if(pid == 0) // child process
-		{
-			if(ConvertH264toTS(fileNumber) < 0)
-				printf("converting h264 to ts error!!!! it has been skipped\n");
-			exit(0);
-		}
-	#else // use command line
-		sprintf(commandFFmpeg, "ffmpeg -r 30 -i VIDEO%d.h264 -vcodec copy -f mpegts -y VIDEO%d.ts &", fileNumber, fileNumber);
-		system(commandFFmpeg); // execute ffmpeg command
-	#endif
-		sprintf(addEXTINF, "#EXTINF:%0.2f,\nhttp://embedded.snut.ac.kr:8989/hls_test/VIDEO%d.ts", ((float)FRAMECOUNT/30.0), fileNumber);
-		WriteM3U8(addEXTINF);
-
-	#ifdef USE_FFMPEG_LIBRARY
-		if(pid != 0) // parent process
-		{
-			waitpid(pid, &status, 0);
-		}
-	#endif
-
-	pthread_exit(0);
-}
-
 #ifdef USE_FFMPEG_LIBRARY
 int ConvertH264toTS(int fileNumber)
 {
 	AVFormatContext* inputFormatContext = NULL;
 	AVFormatContext* outputFormatContext = NULL;
 	AVStream* inStream = NULL;
-	AVStream* outStream;
+	AVStream* outStream = NULL;
 	AVOutputFormat* outFormat = NULL;
 	AVCodec* outCodec = NULL;
-	AVPacket pkt, outpkt;
+	AVPacket pkt;
+	AVPacket outpkt;
 	char inputFile[200], outputFile[200];
 	unsigned int i, inStreamIndex = 0;
 	int fps, pts = 0, last_pts = 0;
@@ -769,7 +720,7 @@ int ConvertH264toTS(int fileNumber)
 		}
 		else
 		{
-			// printf("found out vid encoder");
+			printf("found out vid encoder : %s\n", outCodec->name);
 			outStream = avformat_new_stream(outputFormatContext, outCodec);
             if(NULL == outStream)
             {
@@ -833,8 +784,8 @@ int ConvertH264toTS(int fileNumber)
 	{
 		if(pkt.stream_index == inStreamIndex)
 		{
-			av_rescale_q(pkt.pts, inStream->time_base, inStream->codec->time_base);
-			av_rescale_q(pkt.dts, inStream->time_base, inStream->codec->time_base);
+			// av_rescale_q(pkt.pts, inStream->time_base, inStream->codec->time_base);
+			// av_rescale_q(pkt.dts, inStream->time_base, inStream->codec->time_base);
 			
 			av_init_packet(&outpkt);
 			
@@ -876,42 +827,66 @@ int ConvertH264toTS(int fileNumber)
 		}
 	}
 
-	// free packet
-	av_free_packet(&pkt);
-
 	// Finally write trailer and clean up everything
 	av_write_trailer(outputFormatContext);
-
-	// free streams
-	// av_freep(&inStream->codec);
-	// av_freep(&inStream);
-	// av_freep(&outStream->codec);
-	// av_freep(&outStream);
 	
-	// free codec
-	// avcodec_close(outCodec);
-	
-	// free outputfile
-	// avio_close(outputFormatContext->pb);
-	
-	// free the format contexts
-	avformat_free_context(inputFormatContext);
-	avformat_free_context(outputFormatContext);
-	
-	printf("done\n");
-
-	// free list
-	// AVFormatContext* inputFormatContext = NULL; // freed
-	// AVFormatContext* outputFormatContext = NULL; // freed
-	// AVStream* inStream = NULL; // freed
-	// AVStream* outStream; // freed
-	// AVOutputFormat* outFormat = NULL;
-	// AVCodec* outCodec = NULL; // freed
-	// AVPacket pkt, outpkt; // freed
+	// free the memory
+	if(inStream && inStream->codec)
+		avcodec_close(inStream->codec);
+	if(inputFormatContext)
+		avformat_close_input(&inputFormatContext);
+	if(outStream && outStream->codec)
+		avcodec_close(outStream->codec);
+	if(outputFormatContext)
+	{
+		avformat_close_input(&outputFormatContext);
+		outputFormatContext = NULL;
+	}
 	
 	return 0;
 }
 #endif
+
+void* Ffmpeg_thread_function(void* arg)
+{
+	int fileNumber = *((int *)arg);
+	#ifdef USE_FFMPEG_LIBRARY
+		char addEXTINF[LENGTH_FFMPEG_COMMAND];
+		char fileName[FILENAME_LENGTH];
+	#else
+		char commandFFmpeg[LENGTH_FFMPEG_COMMAND], addEXTINF[LENGTH_FFMPEG_COMMAND];
+		char fileName[FILENAME_LENGTH];
+	#endif
+	
+	// tweaked by GJ Yang /////
+	// printf("%c[2J%c[0;0H",27,27);fflush(stdout);
+	// printf("%c[%d;%dH",27, 1, 1);fflush(stdout);
+	///////////////////////////
+	
+	#ifdef USE_FFMPEG_LIBRARY // use FFmpeg Library
+		
+		sprintf(fileName, "VIDEO%d.ts", fileNumber);
+		if(FileExist(fileName))
+		{
+			if(remove(fileName) < 0)
+			{
+				printf("%s file removing error\n", fileName);
+				exit(-1);
+			}
+		}
+		
+		if(ConvertH264toTS(fileNumber) < 0)
+				printf("converting h264 to ts error!!!! it has been skipped\n");
+	#else // use command line
+		sprintf(commandFFmpeg, "ffmpeg -r 30 -i VIDEO%d.h264 -vcodec copy -f mpegts -y VIDEO%d.ts &", fileNumber, fileNumber);
+		system(commandFFmpeg); // execute ffmpeg command
+	#endif
+		sprintf(addEXTINF, "#EXTINF:%0.2f,\nhttp://embedded.snut.ac.kr:8989/hls_test/VIDEO%d.ts", ((float)FRAMECOUNT/30.0), fileNumber);
+		WriteM3U8(addEXTINF);
+
+	pthread_exit(0);
+}
+
 
 void* Control_thread_function()
 {
@@ -1049,7 +1024,7 @@ void WriteM3U8(char* printData)
 	fclose(fp);
 }
 
-void RemoveForemostMedia(int sequenceCnt)
+void RemoveForemostMedia(unsigned int sequenceCnt)
 {
 	int fileSize;
 	int cnt = 0;
@@ -1067,14 +1042,13 @@ void RemoveForemostMedia(int sequenceCnt)
 	
 	// copy the file content to fileString
 	// + 2 is for a case of raising TARGETSEQUENCE digit
-	fileString = (char*)malloc(sizeof(char) * (fileSize + 1));
+	// fileString = (char*)malloc(sizeof(char) * (fileSize + 1));
+ 	fileString = (char*)malloc(sizeof(char) * (fileSize));
  	fread(fileString, sizeof(char), fileSize, fp);
-	fileString[fileSize + 1] = '\0';
-
-	fclose(fp);
+	// fileString[fileSize + 1] = '\0';
 
 	// truncate file to zero length("w" argument) and reopen
-	fp = fopen(PLAYLIST_FILENAME, "w");
+	freopen(PLAYLIST_FILENAME, "w", fp);
 	
 	while(cnt < fileSize)
 	{
